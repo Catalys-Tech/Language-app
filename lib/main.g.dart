@@ -8,7 +8,7 @@
 
 import 'package:hive/hive.dart';
 
-import 'main.dart';
+import 'model page/model_page.dart';
 
 class RecordingAdapter extends TypeAdapter<Recording> {
   @override
@@ -24,7 +24,7 @@ class RecordingAdapter extends TypeAdapter<Recording> {
       word: fields[1] as String,
       letter: fields[2] as String,
       status: fields[4] as RecordingStatus,
-      audioPath: fields[3] as String,
+      audioPath: fields[3] as String, langCode: '',
     );
   }
 

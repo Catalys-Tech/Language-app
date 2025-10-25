@@ -2,52 +2,35 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:live_project/spalsh_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter_sound/flutter_sound.dart' hide PlayerState;
-import 'package:audioplayers/audioplayers.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:percent_indicator/percent_indicator.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
+import 'Static _Data_Page.dart';
 import 'main.g.dart';
+import 'model page/model_page.dart';
 
+// ==================== MODELS ====================
 
+class Language {
+  final String code;
+  final String name;
+  final List<String> letters;
+  final Map<String, List<String>> wordsMap;
 
-// ------------------------- Models -------------------------
-@HiveType(typeId: 0)
-class Recording extends HiveObject {
-  @HiveField(0)
-  final String id;
-  @HiveField(1)
-  final String word;
-  @HiveField(2)
-  final String letter;
-  @HiveField(3)
-  final String audioPath;
-  @HiveField(4)
-  RecordingStatus status;
-
-  Recording({
-    required this.word,
-    required this.letter,
-    required this.audioPath,
-    this.status = RecordingStatus.pending,
-  }) : id = DateTime.now().millisecondsSinceEpoch.toString();
-
-  static Future<String> getUniqueAudioPath(String word) async {
-    final directory = await getApplicationSupportDirectory();
-    await Directory(directory.path).create(recursive: true);
-    final safe = word.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
-    final fileName = 'rec_${safe}_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    return '${directory.path}/$fileName';
-  }
+  const Language({
+    required this.code,
+    required this.name,
+    required this.letters,
+    required this.wordsMap,
+  });
 }
 
-enum RecordingStatus { pending, approved, rejected }
-
-// ------------------------- App Data Provider -------------------------
+// ==================== PROVIDERS ====================
 class AppData with ChangeNotifier {
   Box<Recording>? _recordingsBox;
   Box? _approvedWordsBox;
@@ -57,23 +40,56 @@ class AppData with ChangeNotifier {
 
   bool get initialized => _initialized;
   bool get justCompletedLetter => _justCompletedLetter;
+  List<Recording> get recordings => _recordingsBox?.values.toList() ?? [];
 
-  List<Recording> get recordings =>
-      _recordingsBox?.values.toList() ?? <Recording>[];
+  int getApprovedCount(String code) {
+    if (_approvedWordsBox == null) return 0;
+    final key = 'approved_$code';
+    final list =
+    _approvedWordsBox!.get(key, defaultValue: <String>[]) as List<String>;
+    return list.length;
+  }
 
-  Set<String> get approvedWords =>
-      Set<String>.from(_approvedWordsBox?.get('words', defaultValue: <String>[]) ?? <String>[]);
+  Set<String> getUnlocked(String code) {
+    if (_unlockedAchievementsBox == null) return {};
+    final key = 'unlocked_$code';
+    final list =
+    _unlockedAchievementsBox!.get(key, defaultValue: <String>[])
+    as List<String>;
+    return Set<String>.from(list);
+  }
 
-  Set<String> get unlockedAchievements =>
-      Set<String>.from(_unlockedAchievementsBox?.get('achievements', defaultValue: <String>[]) ?? <String>[]);
+  // 🆕 Check if a word is already approved
+  bool isWordAlreadyApproved(String word, String langCode) {
+    if (_approvedWordsBox == null) return false;
+    final key = 'approved_$langCode';
+    final approvedList = List<String>.from(
+      _approvedWordsBox!.get(key, defaultValue: <String>[]),
+    );
+    return approvedList.contains(word);
+  }
 
   Future<void> init() async {
+    if (_initialized) return;
+
     try {
       await Hive.initFlutter();
-      if (!Hive.isAdapterRegistered(0)) Hive.registerAdapter(RecordingAdapter());
-      _recordingsBox = await Hive.openBox<Recording>('recordings');
-      _approvedWordsBox = await Hive.openBox('approvedWords');
-      _unlockedAchievementsBox = await Hive.openBox('unlockedAchievements');
+
+      if (!Hive.isAdapterRegistered(0))
+        Hive.registerAdapter(RecordingAdapter());
+      if (!Hive.isAdapterRegistered(1))
+        Hive.registerAdapter(RecordingStatusAdapter());
+
+      if (!Hive.isBoxOpen('recordings')) {
+        _recordingsBox = await Hive.openBox<Recording>('recordings');
+      }
+      if (!Hive.isBoxOpen('approvedWords')) {
+        _approvedWordsBox = await Hive.openBox('approvedWords');
+      }
+      if (!Hive.isBoxOpen('unlockedAchievements')) {
+        _unlockedAchievementsBox = await Hive.openBox('unlockedAchievements');
+      }
+
       _initialized = true;
       notifyListeners();
     } catch (e) {
@@ -82,12 +98,24 @@ class AppData with ChangeNotifier {
     }
   }
 
-  Future<void> addRecording(String word, String letter, String audioPath) async {
+  Future<void> addRecording(
+      String word,
+      String letter,
+      String audioPath,
+      String langCode,
+      ) async {
     try {
       if (_recordingsBox == null) return;
-      if (recordings.any((r) => r.word == word && r.status == RecordingStatus.pending)) return;
-      final r = Recording(word: word, letter: letter, audioPath: audioPath);
-      await _recordingsBox!.add(r);
+
+      // 🔹 Allow all recordings to be added (including duplicates)
+      // No checking - just add the recording
+      final recording = Recording(
+        word: word,
+        letter: letter,
+        audioPath: audioPath,
+        langCode: langCode,
+      );
+      await _recordingsBox!.add(recording);
       notifyListeners();
     } catch (e) {
       debugPrint('addRecording error: $e');
@@ -95,32 +123,43 @@ class AppData with ChangeNotifier {
     }
   }
 
-  Future<void> reviewRecording(Recording recording, bool isApproved, Map<String, List<String>> wordMap) async {
+  Future<void> reviewRecording(Recording recording, bool isApproved) async {
     try {
       if (_approvedWordsBox == null || _unlockedAchievementsBox == null) return;
+      if (recording.status != RecordingStatus.pending) return;
 
       if (isApproved) {
-        recording.status = RecordingStatus.approved;
-        final approvedList = approvedWords.toList()..add(recording.word);
-        await _approvedWordsBox!.put('words', approvedList);
+        // 🔹 Check if word is already approved before adding to progress
+        final key = 'approved_${recording.langCode}';
+        final approvedList = List<String>.from(
+          _approvedWordsBox!.get(key, defaultValue: <String>[]),
+        );
 
-        final wasUnlocked = unlockedAchievements.contains(recording.letter);
-        _checkForAchievement(recording.letter, wordMap);
-        final nowUnlocked = unlockedAchievements.contains(recording.letter);
-        if (!wasUnlocked && nowUnlocked) _justCompletedLetter = true;
+        // 🔹 Only add to approved list if not already there (for progress tracking)
+        if (!approvedList.contains(recording.word)) {
+          approvedList.add(recording.word);
+          await _approvedWordsBox!.put(key, approvedList);
+
+          final wasUnlocked = getUnlocked(
+            recording.langCode,
+          ).contains(recording.letter);
+          _checkForAchievement(recording.letter, recording.langCode);
+          final nowUnlocked = getUnlocked(
+            recording.langCode,
+          ).contains(recording.letter);
+
+          if (!wasUnlocked && nowUnlocked) _justCompletedLetter = true;
+        } else {
+          debugPrint('Word "${recording.word}" was already approved. Not counting duplicate in progress.');
+        }
+
+        recording.status = RecordingStatus.approved;
       } else {
         recording.status = RecordingStatus.rejected;
       }
 
-      final audioFile = File(recording.audioPath);
-      if (await audioFile.exists()) {
-        try {
-          await audioFile.delete();
-        } catch (e) {
-          debugPrint('Failed deleting audio file: $e');
-        }
-      }
-      await recording.delete();
+      // 🔹 Just update the status, don't delete anything
+      await recording.save();
       notifyListeners();
     } catch (e) {
       debugPrint('reviewRecording error: $e');
@@ -128,16 +167,90 @@ class AppData with ChangeNotifier {
     }
   }
 
-  void _checkForAchievement(String letter, Map<String, List<String>> wordMap) {
+  void _checkForAchievement(String letter, String langCode) {
+    final wordMap = getWordsMapForLang(langCode);
     final wordsForLetter = wordMap[letter] ?? [];
+    final key = 'approved_$langCode';
+    final approvedList = List<String>.from(
+      _approvedWordsBox!.get(key, defaultValue: <String>[]),
+    );
+
     final allWordsApproved = wordsForLetter.every((wordData) {
       final word = wordData.split(',').first.trim();
-      return approvedWords.contains(word);
+      return approvedList.contains(word);
     });
 
-    if (allWordsApproved && !unlockedAchievements.contains(letter)) {
-      final achievementsList = unlockedAchievements.toList()..add(letter);
-      _unlockedAchievementsBox!.put('achievements', achievementsList);
+    final achievementsKey = 'unlocked_$langCode';
+    final unlockedList = List<String>.from(
+      _unlockedAchievementsBox!.get(achievementsKey, defaultValue: <String>[]),
+    );
+    final unlockedSet = Set<String>.from(unlockedList);
+
+    if (allWordsApproved && !unlockedSet.contains(letter)) {
+      unlockedList.add(letter);
+      _unlockedAchievementsBox!.put(achievementsKey, unlockedList);
+    }
+  }
+
+  Future<void> resetProgress({String? languageCode}) async {
+    try {
+      debugPrint('🔄 Starting reset for language: ${languageCode ?? "ALL"}');
+
+      if (_recordingsBox != null) {
+        // Get all recordings to delete
+        final recordingsToDelete = languageCode == null
+            ? _recordingsBox!.values.toList()
+            : _recordingsBox!.values.where((r) => r.langCode == languageCode).toList();
+
+        debugPrint('📦 Found ${recordingsToDelete.length} recordings to delete');
+
+        // Delete audio files first
+        for (final recording in recordingsToDelete) {
+          try {
+            final file = File(recording.audioPath);
+            if (await file.exists()) {
+              await file.delete();
+              debugPrint('🗑️ Deleted audio: ${recording.audioPath}');
+            }
+          } catch (e) {
+            debugPrint('⚠️ Error deleting file: $e');
+          }
+        }
+
+        // Delete recordings from box
+        for (final recording in recordingsToDelete) {
+          await recording.delete();
+        }
+        debugPrint('✅ Deleted ${recordingsToDelete.length} recordings from box');
+      }
+
+      if (_approvedWordsBox != null) {
+        if (languageCode == null) {
+          await _approvedWordsBox!.clear();
+          debugPrint('✅ Cleared all approved words');
+        } else {
+          final key = 'approved_$languageCode';
+          await _approvedWordsBox!.delete(key);
+          debugPrint('✅ Cleared approved words for $languageCode');
+        }
+      }
+
+      if (_unlockedAchievementsBox != null) {
+        if (languageCode == null) {
+          await _unlockedAchievementsBox!.clear();
+          debugPrint('✅ Cleared all achievements');
+        } else {
+          final key = 'unlocked_$languageCode';
+          await _unlockedAchievementsBox!.delete(key);
+          debugPrint('✅ Cleared achievements for $languageCode');
+        }
+      }
+
+      debugPrint('🎉 Reset complete!');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ resetProgress error: $e');
+      rethrow;
     }
   }
 
@@ -153,441 +266,809 @@ class AppData with ChangeNotifier {
   }
 }
 
-// ------------------------- Language Notifier -------------------------
 class LanguageNotifier extends ChangeNotifier {
-  bool _isArabic = false;
-  bool get isArabic => _isArabic;
-  void toggleLanguage() {
-    _isArabic = !_isArabic;
-    notifyListeners();
+  int _currentIndex = 0;
+
+  int get currentIndex => _currentIndex;
+  Language get currentLanguage => supportedLanguages[_currentIndex];
+  bool get isArabic => currentLanguage.code == 'ar';
+
+  void setLanguage(int index) {
+    if (index != _currentIndex) {
+      _currentIndex = index;
+      notifyListeners();
+    }
   }
 }
+// ==================== MAIN ====================
 
-// ------------------------- Static Data -------------------------
-const List<String> arabicLetters = ['ا','ب','ت','ث','ج','ح','خ','د','ذ','ر','ز','س','ش','ص','ض','ط','ظ','ع','غ','ف','ق','ك','ل','م','ن','ه','و','ي'];
-const List<String> englishLetters = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'];
-
-final Map<String, List<String>> wordsMapEnglish = {
-  'A': ['Apple','Ant','Airplane','Arm','Arrow'],
-  'B': ['Ball','Book','Bird','Box','Boy'],
-  // add full dataset as needed
-};
-
-final Map<String, List<String>> wordsMapArabic = {
-  'ا': ['أَب, Father, Ab','أُمّ, Mother, Umm'],
-  'ب': ['بَاب, Door, Baab','بَيْت, House, Bayt'],
-  // add full dataset as needed
-};
-
-// ------------------------- Main -------------------------
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(MultiProvider(
-    providers: [
-      ChangeNotifierProvider(create: (_) => AppData()..init()),
-      ChangeNotifierProvider(create: (_) => LanguageNotifier()),
-    ],
-    child: const LanguageApp(),
-  ));
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AppData()..init()),
+        ChangeNotifierProvider(create: (_) => LanguageNotifier()),
+      ],
+      child: const LanguageApp(),
+    ),
+  );
 }
 
 class LanguageApp extends StatelessWidget {
   const LanguageApp({super.key});
+
   @override
   Widget build(BuildContext context) {
-    final base = ThemeData.light();
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Learning Adventure',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
-        textTheme: GoogleFonts.poppinsTextTheme(base.textTheme),
+        textTheme: GoogleFonts.poppinsTextTheme(),
       ),
       home: const SplashScreen(),
     );
   }
 }
 
-// ------------------------- Splash -------------------------
-class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
-  @override
-  State<SplashScreen> createState() => _SplashScreenState();
-}
-class _SplashScreenState extends State<SplashScreen> {
-  @override
-  void initState() {
-    super.initState();
-    Timer(const Duration(seconds: 2), () {
-      if (mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomePage()));
-    });
-  }
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    body: Container(
-      decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.teal.shade400, Colors.blue.shade300])),
-      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children:[
-        const Icon(Icons.auto_stories, size: 92, color: Colors.white),
-        const SizedBox(height:12),
-        Text('Learning Adventure', style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Colors.white, fontWeight: FontWeight.bold)),
-      ])),
-    ),
-  );
-}
+// ==================== LETTERS GRID ====================
 
-// ------------------------- Home with Bottom Navigation -------------------------
-class HomePage extends StatefulWidget { const HomePage({super.key}); @override State<HomePage> createState() => _HomePageState(); }
-class _HomePageState extends State<HomePage> {
-  int _selectedIndex = 0;
-  @override Widget build(BuildContext context) {
-    final language = Provider.of<LanguageNotifier>(context);
-    final screens = [
-      LettersGrid(isArabic: language.isArabic),
-      ProgressPage(isArabic: language.isArabic),
-      AchievementsPage(isArabic: language.isArabic),
-      const ReviewListPage()
-    ];
-    final titles = ['Letters','Progress','Awards','Review'];
-
-    return Consumer<AppData>(builder: (ctx, appData, child){
-      if (appData.justCompletedLetter) {
-        WidgetsBinding.instance.addPostFrameCallback((_){
-          appData.clearCompletionFlag();
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Letter completed! 🎉')));
-        });
-      }
-
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(titles[_selectedIndex]),
-          actions:[ IconButton(icon: const Icon(Icons.language), onPressed: ()=> language.toggleLanguage()) ],
-        ),
-        body: screens[_selectedIndex],
-        bottomNavigationBar: BottomNavigationBar(
-          type: BottomNavigationBarType.fixed,
-          currentIndex: _selectedIndex,
-          onTap: (i)=> setState(()=> _selectedIndex = i),
-          selectedItemColor: Colors.teal,
-          unselectedItemColor: Colors.grey,
-          items: const [
-            BottomNavigationBarItem(icon: Icon(Icons.grid_view), label: 'Letters'),
-            BottomNavigationBarItem(icon: Icon(Icons.show_chart), label: 'Progress'),
-            BottomNavigationBarItem(icon: Icon(Icons.star), label: 'Awards'),
-            BottomNavigationBarItem(icon: Icon(Icons.check_circle), label: 'Review'),
-          ],
-        ),
-      );
-    });
-  }
-}
-
-// ------------------------- Letters Grid -------------------------
 class LettersGrid extends StatelessWidget {
-  final bool isArabic;
-  const LettersGrid({super.key, required this.isArabic});
-  @override Widget build(BuildContext context){
-    final letters = isArabic ? arabicLetters : englishLetters;
-    return Container(
-      decoration: const BoxDecoration(gradient: LinearGradient(colors: [Color(0xFFFFFDE7), Color(0xFFE3F2FD)])),
-      child: SafeArea(child: GridView.builder(
-          padding: const EdgeInsets.all(16),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount:3, mainAxisSpacing:16, crossAxisSpacing:16),
-          itemCount: letters.length,
-          itemBuilder: (ctx, idx){
-            final letter = letters[idx];
-            return LetterTile(letter: letter, index: idx, isArabic: isArabic);
-          })),
-    );
-  }
-}
+  final Language language;
 
-class LetterTile extends StatelessWidget {
-  final String letter; final int index; final bool isArabic;
-  const LetterTile({super.key, required this.letter, required this.index, required this.isArabic});
-  @override Widget build(BuildContext context){
-    final colors = [
-      [const Color(0xFFFC5C7D), const Color(0xFF6A82FB)],
-      [const Color(0xFFFBD786), const Color(0xFFF7797D)],
-      [const Color(0xFF84FAB0), const Color(0xFF8FD3F4)],
-      [const Color(0xFFFF9A8B), const Color(0xFFFF6A88)]
-    ];
-    final cp = colors[index % colors.length];
-    return InkWell(
-      onTap: ()=> Navigator.push(context, MaterialPageRoute(builder: (_)=> WordPages(initialLetterIndex: index))),
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: cp),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.black, blurRadius:8, offset: const Offset(0,4))],
+  const LettersGrid({super.key, required this.language});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      // 👇 This makes body content appear *behind* the transparent AppBar
+      extendBodyBehindAppBar: true,
+      body: Container(
+        // 👇 Background image added
+        decoration: const BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/background.jpg'),
+            fit: BoxFit.cover,
+          ),
         ),
-        child: Center(child: Text(letter, style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontSize: 36), textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr )),
+        child: SafeArea(
+          top: false, // so it flows under AppBar
+          child: GridView.builder(
+            padding: const EdgeInsets.only(top: 100, left: 16, right: 16, bottom: 16),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              mainAxisSpacing: 16,
+              crossAxisSpacing: 16,
+            ),
+            itemCount: language.letters.length + 1, // +1 for reset button
+            itemBuilder: (context, index) {
+              if (index == language.letters.length) {
+                return const _ResetTile();
+              }
+              return LetterTile(
+                letter: language.letters[index],
+                index: index,
+                language: language,
+              );
+            },
+          ),
+        ),
       ),
     );
   }
 }
 
-// ------------------------- Word Pages with Recording -------------------------
-class WordPages extends StatefulWidget { final int initialLetterIndex; const WordPages({super.key, required this.initialLetterIndex}); @override State<WordPages> createState() => _WordPagesState(); }
+// 🔹 Letter tile widget
+class LetterTile extends StatelessWidget {
+  final String letter;
+  final int index;
+  final Language language;
+
+  const LetterTile({
+    super.key,
+    required this.letter,
+    required this.index,
+    required this.language,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final gradient = _gradients[index % _gradients.length];
+    final textDir =
+    language.code == 'ar' ? TextDirection.rtl : TextDirection.ltr;
+
+    return InkWell(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => WordPages(
+            initialLetterIndex: index,
+            language: language,
+          ),
+        ),
+      ),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: gradient,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.black38, width: 1),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black45,
+              blurRadius: 8,
+              spreadRadius: 1,
+              offset: Offset(3, 3),
+            ),
+          ],
+        ),
+        child: Center(
+          child: Text(
+            letter,
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+              fontSize: 40,
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              shadows: const [
+                Shadow(
+                  blurRadius: 6,
+                  color: Colors.black45,
+                  offset: Offset(2, 2),
+                ),
+              ],
+            ),
+            textDirection: textDir,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// 🔹 Reset tile widget
+class _ResetTile extends StatelessWidget {
+  const _ResetTile();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = Provider.of<AppData>(context, listen: false);
+
+    return InkWell(
+      onTap: () async {
+        final selectedLanguage = await showDialog<Language>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Reset Progress'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: supportedLanguages
+                  .map(
+                    (lang) => ListTile(
+                  title: Text(lang.name),
+                  onTap: () => Navigator.pop(ctx, lang),
+                ),
+              )
+                  .toList(),
+            ),
+          ),
+        );
+
+        if (selectedLanguage != null) {
+          final confirm = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Confirm Reset'),
+              content: Text(
+                  'Are you sure you want to reset progress for ${selectedLanguage.name}?'),
+              actions: [
+                TextButton(
+                  child: const Text('Cancel'),
+                  onPressed: () => Navigator.pop(ctx, false),
+                ),
+                ElevatedButton(
+                  style:
+                  ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  child: const Text('Reset'),
+                  onPressed: () => Navigator.pop(ctx, true),
+                ),
+              ],
+            ),
+          );
+
+          if (confirm == true) {
+            await app.resetProgress(languageCode: selectedLanguage.code);
+          }
+        }
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.4),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white70),
+        ),
+        child: const Center(
+          child: Text(
+            'Reset\nProgress',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+              shadows: [
+                Shadow(
+                  blurRadius: 5,
+                  color: Colors.black54,
+                  offset: Offset(1, 2),
+                )
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+// 🔹 Gradient color sets for letter tiles
+const List<List<Color>> _gradients = [
+  [Color(0xFF42A5F5), Color(0xFF1976D2)],
+  [Color(0xFF66BB6A), Color(0xFF2E7D32)],
+  [Color(0xFFFFA726), Color(0xFFF57C00)],
+  [Color(0xFFEF5350), Color(0xFFD32F2F)],
+  [Color(0xFFAB47BC), Color(0xFF6A1B9A)],
+  [Color(0xFF26C6DA), Color(0xFF00838F)],
+];
+// ==================== WORD PAGES ====================
+
+enum RecordingState { ready, recording, recorded }
+
+class WordPages extends StatefulWidget {
+  final int initialLetterIndex;
+  final Language language;
+
+  const WordPages({
+    super.key,
+    required this.initialLetterIndex,
+    required this.language,
+  });
+
+  @override
+  State<WordPages> createState() => _WordPagesState();
+}
+
 class _WordPagesState extends State<WordPages> {
-  late PageController _controller;
-  late List<_PageItem> _pages;
-  bool _isArabic = false;
+  late final PageController _controller;
+  late final List<_PageItem> _pages;
+  late final FlutterSoundRecorder _recorder;
+  late final FlutterTts _tts;
 
-  final FlutterSoundRecorder _recorder = FlutterSoundRecorder();
-  bool _recorderInited = false;
-  bool _isRecording = false;
-  String? _recordingPath;
+  bool _recorderInitialized = false;
+  RecordingState _recordingState = RecordingState.ready;
+  String? _currentRecordingPath;
+  int _currentPageIndex = 0;
 
-  final AudioPlayer _player = AudioPlayer();
+  bool get _isArabic => widget.language.code == 'ar';
 
-  @override void initState(){
+  @override
+  void initState() {
     super.initState();
-    _isArabic = Provider.of<LanguageNotifier>(context, listen:false).isArabic;
+    _recorder = FlutterSoundRecorder();
+    _tts = FlutterTts();
     _buildPages();
     _controller = PageController();
+    _controller.addListener(_onPageChanged);
     _initRecorder();
-    _player.onPlayerComplete.listen((_){
-      if (mounted) {}
-    });
+    _initTts();
+  }
+
+  void _onPageChanged() {
+    if (mounted) {
+      setState(() {
+        _currentPageIndex = _controller.page?.round() ?? 0;
+      });
+    }
+  }
+
+  void _buildPages() {
+    final letter = widget.language.letters[widget.initialLetterIndex];
+    final words = widget.language.wordsMap[letter] ?? [];
+    _pages = [
+      _PageItem(letter: letter),
+      ...words.map((w) => _PageItem(letter: letter, wordData: w)),
+    ];
   }
 
   Future<void> _initRecorder() async {
     try {
-      final micStatus = await Permission.microphone.request();
-      final storageStatus = await Permission.storage.request();
-
-      if (micStatus != PermissionStatus.granted || storageStatus != PermissionStatus.granted) {
+      final status = await Permission.microphone.request();
+      if (status != PermissionStatus.granted) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Microphone/storage permission required to record.')));
+          _showSnackBar('Microphone permission required');
         }
         return;
       }
 
       await _recorder.openRecorder();
       _recorder.setSubscriptionDuration(const Duration(milliseconds: 200));
-      _recorderInited = true;
-      debugPrint('Recorder initialized');
+      _recorderInitialized = true;
     } catch (e) {
       debugPrint('Recorder init failed: $e');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Recorder init failed: $e')));
+      if (mounted) _showSnackBar('Recorder initialization failed');
     }
   }
 
-  void _buildPages(){
-    final letters = _isArabic ? arabicLetters : englishLetters;
-    final map = _isArabic ? wordsMapArabic : wordsMapEnglish;
-    final letter = letters[widget.initialLetterIndex];
-    final words = map[letter] ?? [];
-    _pages = [ _PageItem(letter: letter), ...words.map((w)=> _PageItem(letter: letter, wordData: w)) ];
+  Future<void> _initTts() async {
+    try {
+      await _tts.setLanguage(widget.language.code);
+      await _tts.setSpeechRate(0.5);
+      await _tts.setVolume(1.0);
+      await _tts.setPitch(1.0);
+    } catch (e) {
+      debugPrint('TTS init failed: $e');
+    }
   }
 
-  Future<void> _toggleRecording(String word, String letter) async {
-    if (!_recorderInited) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recorder not initialized')));
-      return;
+  Future<void> _speak(String text) async {
+    try {
+      await _tts.stop();
+      await _tts.speak(text);
+    } catch (e) {
+      debugPrint('Speak failed: $e');
+      if (mounted) _showSnackBar('Text-to-speech failed');
+    }
+  }
+
+  Future<void> _startRecording(String word) async {
+    if (!_recorderInitialized) {
+      await _initRecorder();
+      if (!_recorderInitialized) {
+        if (mounted) _showSnackBar('Recorder not ready');
+        return;
+      }
     }
 
     try {
-      if (_isRecording) {
-        final path = await _recorder.stopRecorder();
-        setState(()=> _isRecording = false);
-        debugPrint('Stopped recording. path: $path');
-        if (path != null) {
-          await Provider.of<AppData>(context, listen:false).addRecording(word, letter, path);
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recording submitted for review')));
-        }
-      } else {
-        _recordingPath = await Recording.getUniqueAudioPath(word);
-        debugPrint('Recording to $_recordingPath');
-        await _recorder.startRecorder(
-          toFile: _recordingPath,
-          codec: Codec.aacMP4, // widely supported
-        );
-        setState(()=> _isRecording = true);
-      }
+      _currentRecordingPath = await Recording.getUniqueAudioPath(word);
+      await _recorder.startRecorder(
+        toFile: _currentRecordingPath,
+        codec: Codec.aacMP4,
+      );
+      setState(() => _recordingState = RecordingState.recording);
     } catch (e) {
-      debugPrint('Recording failed: $e');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recording failed')));
-      setState(()=> _isRecording = false);
+      debugPrint('Start recording failed: $e');
+      if (mounted) _showSnackBar('Recording failed to start');
+      setState(() => _recordingState = RecordingState.ready);
     }
   }
 
+  Future<void> _stopRecording() async {
+    if (_recordingState != RecordingState.recording) return;
 
-  @override Widget build(BuildContext context){
-    final textDir = _isArabic ? TextDirection.rtl : TextDirection.ltr;
+    try {
+      final path = await _recorder.stopRecorder();
+      if (path != null && path.isNotEmpty) {
+        setState(() => _recordingState = RecordingState.recorded);
+      } else {
+        if (mounted) _showSnackBar('Recording failed to save');
+        _cancelRecording();
+      }
+    } catch (e) {
+      debugPrint('Stop recording failed: $e');
+      if (mounted) _showSnackBar('Failed to stop recording');
+      _cancelRecording();
+    }
+  }
+
+  Future<void> _confirmRecording(String word, String letter) async {
+    if (_currentRecordingPath == null) return;
+
+    try {
+      final langCode = context.read<LanguageNotifier>().currentLanguage.code;
+      await context.read<AppData>().addRecording(
+        word,
+        letter,
+        _currentRecordingPath!,
+        langCode,
+      );
+
+      if (mounted) {
+        _showSnackBar('Recording submitted! 👍');
+        setState(() {
+          _recordingState = RecordingState.ready;
+          _currentRecordingPath = null;
+        });
+
+        final isLastPage = _currentPageIndex >= _pages.length - 1;
+        await Future.delayed(const Duration(milliseconds: 250));
+
+        if (mounted) {
+          if (isLastPage) {
+            // Navigate back to homepage (pop all routes until first route)
+            Navigator.popUntil(context, (route) => route.isFirst);
+          } else {
+            _controller.nextPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeIn,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) _showSnackBar('Failed to submit recording');
+    }
+  }
+  void _cancelRecording() {
+    if (_currentRecordingPath != null) {
+      try {
+        final file = File(_currentRecordingPath!);
+        if (file.existsSync()) file.deleteSync();
+      } catch (e) {
+        debugPrint('Failed to delete cancelled recording: $e');
+      }
+    }
+    setState(() {
+      _recordingState = RecordingState.ready;
+      _currentRecordingPath = null;
+    });
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Learn the Words')),
-      extendBodyBehindAppBar: true,
       body: Container(
-        decoration: const BoxDecoration(gradient: LinearGradient(colors: [Color(0xFF84FAB0), Color(0xFF8FD3F4)])),
-        child: SafeArea(
-          child: Column(children:[
-            Expanded(
-              child: PageView.builder(
-                  controller: _controller,
-                  itemCount: _pages.length,
-                  itemBuilder: (ctx,i){
-                    final p = _pages[i];
-                    if (p.wordData == null) {
-                      return Center(child: Text(p.letter, textDirection: textDir, style: Theme.of(context).textTheme.displayLarge?.copyWith(fontSize: 140)));
-                    }
-                    final parts = p.wordData!.split(',');
-                    final word = parts[0].trim();
-                    return Column(mainAxisAlignment: MainAxisAlignment.center, children:[
-                      Text(p.letter, textDirection: textDir, style: Theme.of(context).textTheme.displayLarge),
-                      const SizedBox(height:20),
-                      Text(word, textDirection: textDir, style: Theme.of(context).textTheme.headlineMedium),
-                      if (_isArabic && parts.length > 2) Padding(padding: const EdgeInsets.only(top:12.0), child: Column(children:[
-                        Text(parts[1].trim(), style: const TextStyle(fontSize:20,color:Colors.white70)),
-                        Text(parts[2].trim(), style: const TextStyle(fontSize:20,color:Colors.white54)),
-                      ])),
-                      const SizedBox(height:30),
-                      // glowing record button
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds:300),
-                        height: 120,
-                        width: 120,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _isRecording ? Colors.redAccent : Colors.orange,
-                          boxShadow: [
-                            if (_isRecording)
-                              BoxShadow(color: Colors.redAccent, blurRadius: 30, spreadRadius:5)
-                            else
-                              BoxShadow(color: Colors.black, blurRadius:8)
-                          ],
-                        ),
-                        child: IconButton(icon: Icon(_isRecording ? Icons.stop : Icons.mic, size:42, color: Colors.white), onPressed: ()=> _toggleRecording(word, p.letter)),
-                      ),
-                    ]);
-                  }
+        decoration: const BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/background.jpg'),
+            fit: BoxFit.cover, // makes it fill the whole screen
+          ),
+        ),
+        child: Stack(
+          children: [
+            SafeArea(
+              child: Column(
+                children: [
+                  Expanded(
+                    child: PageView.builder(
+                      controller: _controller,
+                      itemCount: _pages.length,
+                      itemBuilder: (context, index) =>
+                          _buildPage(_pages[index]),
+                    ),
+                  ),
+                  _buildNavigationBar(),
+                ],
               ),
             ),
-            Padding(padding: const EdgeInsets.all(16), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children:[
-              IconButton(icon: const Icon(Icons.arrow_back_ios, size:36,color:Colors.white), onPressed: ()=> _controller.previousPage(duration: const Duration(milliseconds:300), curve: Curves.easeIn)),
-              IconButton(icon: const Icon(Icons.home, size:36,color:Colors.white), onPressed: ()=> Navigator.pop(context)),
-              IconButton(icon: const Icon(Icons.arrow_forward_ios, size:36,color:Colors.white), onPressed: ()=> _controller.nextPage(duration: const Duration(milliseconds:300), curve: Curves.easeIn)),
-            ]))
-          ]),
+            _buildCloseButton(),
+            if (_pages[_currentPageIndex].wordData != null)
+              _buildRecordingControls(
+                _pages[_currentPageIndex].wordData!.split(',').first.trim(),
+                _pages[_currentPageIndex].letter,
+              ),
+          ],
         ),
       ),
     );
   }
 
-  @override void dispose(){
-    _controller.dispose();
-    try { _recorder.closeRecorder(); } catch (_) {}
-    _player.dispose();
-    super.dispose();
-  }
-}
+  Widget _buildPage(_PageItem page) {
+    final textDir = _isArabic ? TextDirection.rtl : TextDirection.ltr;
 
-class _PageItem { final String letter; final String? wordData; _PageItem({required this.letter, this.wordData}); }
-
-// ------------------------- Progress Page -------------------------
-class ProgressPage extends StatelessWidget {
-  final bool isArabic; const ProgressPage({super.key, required this.isArabic});
-  @override Widget build(BuildContext context){
-    final app = Provider.of<AppData>(context);
-    final map = isArabic ? wordsMapArabic : wordsMapEnglish;
-    final totalWords = map.values.fold<int>(0,(p,e)=> p+ e.length);
-    final approved = app.approvedWords.length;
-    final progress = totalWords>0 ? (approved/totalWords) : 0.0;
-    return Scaffold(appBar: AppBar(title: const Text('My Progress')), body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children:[
-      CircularPercentIndicator(radius: 110, lineWidth: 20, percent: progress, center: Text('${(progress*100).toStringAsFixed(1)}%', style: const TextStyle(fontSize:28,fontWeight:FontWeight.bold)), footer: Padding(padding: const EdgeInsets.only(top:12.0), child: Text("You've learned $approved of $totalWords words", style: const TextStyle(fontSize:16)))),
-      const SizedBox(height:24),
-      const Text('Keep going! 🎉', style: TextStyle(fontSize:16))
-    ])));
-  }
-}
-
-// ------------------------- Achievements -------------------------
-class AchievementsPage extends StatelessWidget { final bool isArabic; const AchievementsPage({super.key, required this.isArabic});
-@override Widget build(BuildContext context){
-  final letters = isArabic ? arabicLetters : englishLetters;
-  final unlocked = Provider.of<AppData>(context).unlockedAchievements;
-  return Scaffold(appBar: AppBar(title: const Text('My Awards')), body: GridView.builder(padding: const EdgeInsets.all(16), gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount:4,mainAxisSpacing:12,crossAxisSpacing:12), itemCount: letters.length, itemBuilder: (ctx,i){
-    final l = letters[i];
-    final unlockedFlag = unlocked.contains(l);
-    return Container(
-        decoration: BoxDecoration(
-          color: unlockedFlag ? Colors.amber.shade100 : Colors.blueGrey.shade50,
-          borderRadius: BorderRadius.circular(100),
-          border: Border.all(color: unlockedFlag ? Colors.amber.shade600 : Colors.grey.shade300, width:2.5),
+    if (page.wordData == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              page.letter,
+              textDirection: textDir,
+              style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                fontSize: 180,
+                color: Colors.black87,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height:30),
+            IconButton(
+              icon: const Icon(Icons.volume_up, size: 40, color: Colors.black),
+              onPressed: () => _speak(page.letter),
+            ),
+          ],
         ),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text(l, style: TextStyle(fontSize:22, fontWeight: FontWeight.bold, color: unlockedFlag ? Colors.amber.shade800 : Colors.grey.shade700)),
-          if (unlockedFlag) Padding(padding: const EdgeInsets.only(top:6.0), child: Icon(Icons.star, color: Colors.amber.shade700))
-        ])
+      );
+    }
+
+    final parts = page.wordData!.split(',');
+    final word = parts[0].trim();
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Center(
+          child: Text(
+            page.letter,
+            textDirection: textDir,
+            style: Theme.of(context).textTheme.displayLarge?.copyWith(
+              color: Colors.black87,
+              fontWeight: FontWeight.w600,fontSize: 100
+            ),
+          ),
+        ),
+        const SizedBox(height: 30),
+        Center(
+          child: Text(
+            word,
+            textDirection: textDir,
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+              color: Colors.black54,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        const SizedBox(height: 50),
+        IconButton(
+          icon: const Icon(Icons.volume_up, size: 56, color: Colors.black87),
+          onPressed: () => _speak(word),
+        ),
+        if (_isArabic && parts.length > 2)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Column(
+              children: [
+                Text(
+                  parts[1].trim(),
+                  style: const TextStyle(fontSize: 20, color: Colors.black),
+                ),
+                Text(
+                  parts[2].trim(),
+                  style: const TextStyle(fontSize: 20, color: Colors.black87),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 70),
+      ],
     );
-  }));
-}
-}
-
-// ------------------------- Review List -------------------------
-class ReviewListPage extends StatefulWidget { const ReviewListPage({super.key}); @override State<ReviewListPage> createState() => _ReviewListPageState(); }
-class _ReviewListPageState extends State<ReviewListPage> {
-  final AudioPlayer _audioPlayer = AudioPlayer();
-  String? _currentlyPlayingId;
-
-  @override void initState(){
-    super.initState();
-    _audioPlayer.onPlayerStateChanged.listen((state){
-      // keep UI in sync; this will set to null on completion/stop
-      if (state == PlayerState.completed || state == PlayerState.stopped) {
-        if (mounted) setState(()=> _currentlyPlayingId = null);
-      }
-    });
   }
 
-  void _playAudio(String path, String id) async {
-    try {
-      if (_currentlyPlayingId == id) {
-        await _audioPlayer.stop();
-        setState(()=> _currentlyPlayingId = null);
-      } else {
-        await _audioPlayer.play(DeviceFileSource(path));
-        setState(()=> _currentlyPlayingId = id);
-      }
-    } catch (e) {
-      debugPrint('playAudio error: $e');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playback failed')));
+  Widget _buildNavigationBar() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            icon: const Icon(
+              Icons.arrow_back_ios,
+              size: 36,
+              color: Colors.white,
+            ),
+            onPressed: () => _controller.previousPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeIn,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.home, size: 36, color: Colors.black54),
+            onPressed: () => Navigator.pop(context),
+          ),
+          IconButton(
+            icon: const Icon(
+              Icons.arrow_forward_ios,
+              size: 36,
+              color: Colors.black38,
+            ),
+            onPressed: () => _controller.nextPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeIn,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCloseButton() {
+    return Positioned(
+      top: 40,
+      right: 10,
+      child: IconButton(
+        icon: const Icon(Icons.close, color: Colors.black, size: 30),
+        onPressed: () => Navigator.pop(context),
+      ),
+    );
+  }
+
+  Widget _buildRecordingControls(String word, String letter) {
+    switch (_recordingState) {
+      case RecordingState.recorded:
+        return Positioned(
+          bottom: 200,
+          left: 100,
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Review Recording',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _RecordingButton(
+                      icon: Icons.check,
+                      color: Colors.green,
+                      onPressed: () => _confirmRecording(word, letter),
+                    ),
+                    const SizedBox(width: 16),
+                    _RecordingButton(
+                      icon: Icons.close,
+                      color: Colors.redAccent,
+                      onPressed: _cancelRecording,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+
+      case RecordingState.recording:
+      case RecordingState.ready:
+        return Stack(
+          children: [
+            Positioned(
+              bottom: 120,
+              right: 30,
+              child: GestureDetector(
+                onTap: () {
+                  if (_recordingState == RecordingState.recording) {
+                    _stopRecording();
+                  } else {
+                    _startRecording(word);
+                  }
+                },
+                onLongPressStart: (_) => _startRecording(word),
+                onLongPressEnd: (_) => _stopRecording(),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 240),
+                  height: 70,
+                  width: 70,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _recordingState == RecordingState.recording
+                        ? Colors.redAccent
+                        : Colors.white,
+                    boxShadow: [
+                      if (_recordingState == RecordingState.recording)
+                        const BoxShadow(
+                          color: Colors.red,
+                          blurRadius: 24,
+                          spreadRadius: 6,
+                        )
+                      else
+                        BoxShadow(
+                          color: Colors.grey,
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                    ],
+                  ),
+                  child: Icon(
+                    _recordingState == RecordingState.recording
+                        ? Icons.stop_rounded
+                        : Icons.mic,
+                    size: 36,
+                    color: _recordingState == RecordingState.recording
+                        ? Colors.white
+                        : Colors.teal,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 200,
+              right: 24,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _recordingState == RecordingState.recording
+                      ? 'Recording...'
+                      : 'Tap to Record',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
     }
   }
 
-  @override Widget build(BuildContext context){
-    return Consumer2<LanguageNotifier, AppData>(builder: (ctx, lang, app, child){
-      final isArabic = lang.isArabic;
-      final map = isArabic ? wordsMapArabic : wordsMapEnglish;
-      final pending = app.recordings.where((r)=> r.status == RecordingStatus.pending).toList();
-
-      return Scaffold(appBar: AppBar(title: const Text('Review Recordings')), body:
-      pending.isEmpty ? const Center(child: Text('No new recordings to review', style: TextStyle(fontSize:16,color:Colors.grey)))
-          : ListView.builder(itemCount: pending.length, itemBuilder: (ctx,idx){
-        final r = pending[idx];
-        final isPlaying = _currentlyPlayingId == r.id;
-        return Card(margin: const EdgeInsets.symmetric(horizontal:12, vertical:6), elevation:3, child: ListTile(
-          leading: const Icon(Icons.music_note, color: Colors.orange),
-          title: Text(r.word, style: const TextStyle(fontSize:18,fontWeight: FontWeight.bold)),
-          subtitle: Text('Letter: ${r.letter}'),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children:[
-            IconButton(icon: Icon(isPlaying ? Icons.stop_circle_outlined : Icons.play_circle_fill, color: Colors.blue, size:32), onPressed: ()=> _playAudio(r.audioPath, r.id)),
-            IconButton(icon: const Icon(Icons.check_circle, color: Colors.green), onPressed: ()=> app.reviewRecording(r, true, map)),
-            IconButton(icon: const Icon(Icons.cancel, color: Colors.red), onPressed: ()=> app.reviewRecording(r, false, map)),
-          ]),
-        ));
-      })
-      );
-    });
-  }
-
-  @override void dispose(){
-    _audioPlayer.dispose();
+  @override
+  void dispose() {
+    _controller.dispose();
+    _recorder.closeRecorder();
+    _tts.stop();
     super.dispose();
   }
 }
 
-// ------------------------- Helper -------------------------
-extension StringExt on String { String get safeFileName => replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_'); }
+class _RecordingButton extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final VoidCallback onPressed;
+
+  const _RecordingButton({
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color,
+      shape: const CircleBorder(),
+      elevation: 4,
+      child: InkWell(
+        onTap: onPressed,
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Icon(icon, color: Colors.white, size: 24),
+        ),
+      ),
+    );
+  }
+}
+
+class _PageItem {
+  final String letter;
+  final String? wordData;
+
+  _PageItem({required this.letter, this.wordData});
+}
