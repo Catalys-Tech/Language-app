@@ -46,7 +46,6 @@ class _ReviewListPageState extends State<ReviewListPage> {
     }
   }
 
-  // 🆕 Delete individual recording
   void _deleteRecording(Recording recording) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -69,19 +68,16 @@ class _ReviewListPageState extends State<ReviewListPage> {
 
     if (confirmed == true) {
       try {
-        // Stop audio if this recording is playing
         if (_currentlyPlayingId == recording.id) {
           await _audioPlayer.stop();
           setState(() => _currentlyPlayingId = null);
         }
 
-        // Delete audio file
         final file = File(recording.audioPath);
         if (await file.exists()) {
           await file.delete();
         }
 
-        // Delete from Hive
         await recording.delete();
 
         if (mounted) {
@@ -106,7 +102,6 @@ class _ReviewListPageState extends State<ReviewListPage> {
     }
   }
 
-  // 🆕 Delete all recordings
   void _deleteAllRecordings() async {
     final app = Provider.of<AppData>(context, listen: false);
     final allRecordings = app.recordings.toList();
@@ -141,11 +136,8 @@ class _ReviewListPageState extends State<ReviewListPage> {
 
     if (confirmed == true) {
       try {
-        // Stop audio if playing
         await _audioPlayer.stop();
         setState(() => _currentlyPlayingId = null);
-
-        // Reset all progress
         await app.resetProgress();
 
         if (mounted) {
@@ -186,7 +178,6 @@ class _ReviewListPageState extends State<ReviewListPage> {
             elevation: 0,
             centerTitle: true,
             actions: [
-              // 🆕 Delete all button
               if (allRecordings.isNotEmpty)
                 IconButton(
                   icon: const Icon(Icons.delete_sweep, color: Colors.white),
@@ -206,136 +197,120 @@ class _ReviewListPageState extends State<ReviewListPage> {
                   ),
                 ),
               ),
-              // Semi-transparent container
-              Padding(
-                padding: EdgeInsets.only(
-                  top: kToolbarHeight + MediaQuery.of(context).padding.top,
-                  bottom: 10,
-                  left: 10,
-                  right: 10,
-                ),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.5),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Column(
-                    children: [
-                      const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text(
-                          'Recording Review',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      Expanded(
-                        child: allRecordings.isEmpty
-                            ? const Center(
+              // Scrollable content
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 70), // 70px space for bottom nav
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Column(
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.all(16),
                           child: Text(
-                            'No recordings yet',
+                            'Recording Review',
                             style: TextStyle(
-                                color: Colors.white70, fontSize: 16),
+                                color: Colors.white,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold),
                           ),
-                        )
-                            : ListView.builder(
-                            padding: const EdgeInsets.all(8),
-                            itemCount: allRecordings.length,
-                            itemBuilder: (context, index) {
-                              final r = allRecordings[index];
-                              final isPlaying =
-                                  _currentlyPlayingId == r.id;
-                              final isPending =
-                                  r.status == RecordingStatus.pending;
+                        ),
+                        Expanded(
+                          child: allRecordings.isEmpty
+                              ? const Center(
+                            child: Text(
+                              'No recordings yet',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 16),
+                            ),
+                          )
+                              : ListView.builder(
+                              padding: const EdgeInsets.all(8),
+                              itemCount: allRecordings.length,
+                              itemBuilder: (context, index) {
+                                final r = allRecordings[index];
+                                final isPlaying = _currentlyPlayingId == r.id;
+                                final isPending = r.status == RecordingStatus.pending;
 
-                              return Card(
-                                color: Colors.white.withOpacity(0.1),
-                                margin: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 5),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                    BorderRadius.circular(12),
-                                    side: BorderSide(
-                                        color: r.status ==
-                                            RecordingStatus.approved
-                                            ? Colors.green
-                                            : r.status ==
-                                            RecordingStatus
-                                                .rejected
-                                            ? Colors.red
-                                            : Colors.orange)),
-                                child: ListTile(
-                                  leading: Icon(
-                                    r.status == RecordingStatus.approved
-                                        ? Icons.check_circle
-                                        : r.status ==
-                                        RecordingStatus.rejected
-                                        ? Icons.cancel
-                                        : Icons.hourglass_top,
-                                    color: r.status ==
-                                        RecordingStatus.approved
-                                        ? Colors.green
-                                        : r.status ==
-                                        RecordingStatus.rejected
-                                        ? Colors.red
-                                        : Colors.orange,
-                                  ),
-                                  title: Text(
-                                    r.word,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,fontSize: 10),
-                                  ),
-                                  subtitle: Text(
-                                    'Letter: ${r.letter} - ${r.status.name.toUpperCase()}',
-                                    style: const TextStyle(
-                                        color: Colors.white70,fontSize: 10),
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                          icon: Icon(
-                                            isPlaying
-                                                ? Icons
-                                                .stop_circle_outlined
-                                                : Icons.play_circle_fill,
-                                            color: Colors.tealAccent,
-                                            size: 32,
-                                          ),
-                                          onPressed: () => _playAudio(
-                                              r.audioPath, r.id)),
-                                      if (isPending) ...[
+                                return Card(
+                                  color: Colors.white.withOpacity(0.1),
+                                  margin: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 5),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      side: BorderSide(
+                                          color: r.status == RecordingStatus.approved
+                                              ? Colors.green
+                                              : r.status == RecordingStatus.rejected
+                                              ? Colors.red
+                                              : Colors.orange)),
+                                  child: ListTile(
+                                    leading: Icon(
+                                      r.status == RecordingStatus.approved
+                                          ? Icons.check_circle
+                                          : r.status == RecordingStatus.rejected
+                                          ? Icons.cancel
+                                          : Icons.hourglass_top,
+                                      color: r.status == RecordingStatus.approved
+                                          ? Colors.green
+                                          : r.status == RecordingStatus.rejected
+                                          ? Colors.red
+                                          : Colors.orange,
+                                    ),
+                                    title: Text(
+                                      r.word,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16),
+                                    ),
+                                    subtitle: Text(
+                                      'Letter: ${r.letter} - ${r.status.name.toUpperCase()}',
+                                      style: const TextStyle(
+                                          color: Colors.white70, fontSize: 12),
+                                    ),
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
                                         IconButton(
-                                            onPressed: () => app
-                                                .reviewRecording(r, true),
-                                            icon: const Icon(
-                                                Icons.check_circle,
-                                                color: Colors.green)),
+                                            icon: Icon(
+                                              isPlaying
+                                                  ? Icons.stop_circle_outlined
+                                                  : Icons.play_circle_fill,
+                                              color: Colors.tealAccent,
+                                              size: 32,
+                                            ),
+                                            onPressed: () =>
+                                                _playAudio(r.audioPath, r.id)),
+                                        if (isPending) ...[
+                                          IconButton(
+                                              onPressed: () =>
+                                                  app.reviewRecording(r, true),
+                                              icon: const Icon(Icons.check_circle,
+                                                  color: Colors.green)),
+                                          IconButton(
+                                              onPressed: () =>
+                                                  app.reviewRecording(r, false),
+                                              icon: const Icon(Icons.cancel,
+                                                  color: Colors.red)),
+                                        ],
                                         IconButton(
-                                            onPressed: () => app
-                                                .reviewRecording(r, false),
-                                            icon: const Icon(Icons.cancel,
-                                                color: Colors.red)),
+                                          onPressed: () => _deleteRecording(r),
+                                          icon: const Icon(Icons.delete_outline,
+                                              color: Colors.redAccent),
+                                          tooltip: 'Delete',
+                                        ),
                                       ],
-                                      // 🆕 Delete button for individual recording
-                                      IconButton(
-                                        onPressed: () =>
-                                            _deleteRecording(r),
-                                        icon: const Icon(
-                                            Icons.delete_outline,
-                                            color: Colors.redAccent),
-                                        tooltip: 'Delete',
-                                      ),
-                                    ],
+                                    ),
                                   ),
-                                ),
-                              );
-                            }),
-                      ),
-                    ],
+                                );
+                              }),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
