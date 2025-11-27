@@ -18,45 +18,63 @@ class ProgressPage extends StatelessWidget {
 
     return Scaffold(
       body: Container(
-        // 👇 Add background image here
+        // 🔹 Background image
         decoration: const BoxDecoration(
           image: DecorationImage(
             image: AssetImage('assets/background.jpg'),
-            fit: BoxFit.cover, // fills the screen
+            fit: BoxFit.cover,
           ),
         ),
         child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularPercentIndicator(
-                radius: 110,
-                lineWidth: 20,
-                percent: progress,
-                progressColor: Colors.blueAccent,
-                backgroundColor: Colors.black,
-                center: Text(
-                  '${(progress * 100).toStringAsFixed(1)}%',
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 30),
+            margin: const EdgeInsets.symmetric(horizontal: 24),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularPercentIndicator(
+                  radius: 110,
+                  lineWidth: 20,
+                  percent: progress.clamp(0.0, 1.0),
+                  progressColor: Colors.teal,
+                  backgroundColor: Colors.black12,
+                  circularStrokeCap: CircularStrokeCap.round,
+                  center: Text(
+                    '${(progress * 100).toStringAsFixed(1)}%',
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.teal,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  "You've learned $approved of $totalWords words",
                   style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black, // for visibility
+                    fontSize: 16,
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                footer: Padding(
-                  padding: const EdgeInsets.only(top: 12.0),
-                  child: Text(
-                    "You've learned $approved of $totalWords words",
-                    style: const TextStyle(fontSize: 16, color: Colors.black38),
-                  ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Keep going! 🎉',
+                  style: TextStyle(fontSize: 18, color: Colors.black54),
                 ),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Keep going! 🎉',
-                style: TextStyle(fontSize: 16, color: Colors.black38),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

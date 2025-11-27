@@ -73,11 +73,52 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               actions: [
+                // 🌐 Change language button
                 IconButton(
                   icon: const Icon(Icons.language, color: Colors.white),
+                  tooltip: 'Change Language',
                   onPressed: () => _showLanguageSelector(context, language),
                 ),
+
+                // 🔄 Reset progress button
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                  tooltip: 'Reset Progress',
+                  onPressed: () async {
+                    final app = Provider.of<AppData>(context, listen: false);
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Confirm Reset'),
+                        content: Text(
+                            'Are you sure you want to reset progress for ${language.currentLanguage.name}?'),
+                        actions: [
+                          TextButton(
+                            child: const Text('Cancel'),
+                            onPressed: () => Navigator.pop(ctx, false),
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                            child: const Text('Reset'),
+                            onPressed: () => Navigator.pop(ctx, true),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    if (confirm == true) {
+                      await app.resetProgress(languageCode: language.currentLanguage.code);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Progress reset successfully!'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    }
+                  },
+                ),
               ],
+
             ),
           ),
           body: screens[_selectedIndex],

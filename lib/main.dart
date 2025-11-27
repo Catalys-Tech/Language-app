@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:live_project/spalsh_screen.dart';
-import 'package:provider/provider.dart';
+
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_sound/flutter_sound.dart' hide PlayerState;
 import 'package:permission_handler/permission_handler.dart';
@@ -75,10 +75,12 @@ class AppData with ChangeNotifier {
     try {
       await Hive.initFlutter();
 
-      if (!Hive.isAdapterRegistered(0))
+      if (!Hive.isAdapterRegistered(0)) {
         Hive.registerAdapter(RecordingAdapter());
-      if (!Hive.isAdapterRegistered(1))
+      }
+      if (!Hive.isAdapterRegistered(1)) {
         Hive.registerAdapter(RecordingStatusAdapter());
+      }
 
       if (!Hive.isBoxOpen('recordings')) {
         _recordingsBox = await Hive.openBox<Recording>('recordings');
@@ -314,7 +316,6 @@ class LanguageApp extends StatelessWidget {
 }
 
 // ==================== LETTERS GRID ====================
-
 class LettersGrid extends StatelessWidget {
   final Language language;
 
@@ -323,10 +324,8 @@ class LettersGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 👇 This makes body content appear *behind* the transparent AppBar
       extendBodyBehindAppBar: true,
       body: Container(
-        // 👇 Background image added
         decoration: const BoxDecoration(
           image: DecorationImage(
             image: AssetImage('assets/background.jpg'),
@@ -334,7 +333,7 @@ class LettersGrid extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          top: false, // so it flows under AppBar
+          top: false,
           child: GridView.builder(
             padding: const EdgeInsets.only(top: 100, left: 16, right: 16, bottom: 16),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -342,11 +341,8 @@ class LettersGrid extends StatelessWidget {
               mainAxisSpacing: 16,
               crossAxisSpacing: 16,
             ),
-            itemCount: language.letters.length + 1, // +1 for reset button
+            itemCount: language.letters.length, // 👈 removed +1
             itemBuilder: (context, index) {
-              if (index == language.letters.length) {
-                return const _ResetTile();
-              }
               return LetterTile(
                 letter: language.letters[index],
                 index: index,
@@ -360,7 +356,7 @@ class LettersGrid extends StatelessWidget {
   }
 }
 
-// 🔹 Letter tile widget
+// 🔹 Letter Tile Widget
 class LetterTile extends StatelessWidget {
   final String letter;
   final int index;
@@ -376,8 +372,7 @@ class LetterTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final gradient = _gradients[index % _gradients.length];
-    final textDir =
-    language.code == 'ar' ? TextDirection.rtl : TextDirection.ltr;
+    final textDir = language.code == 'ar' ? TextDirection.rtl : TextDirection.ltr;
 
     return InkWell(
       onTap: () => Navigator.push(
@@ -431,92 +426,6 @@ class LetterTile extends StatelessWidget {
   }
 }
 
-// 🔹 Reset tile widget
-class _ResetTile extends StatelessWidget {
-  const _ResetTile();
-
-  @override
-  Widget build(BuildContext context) {
-    final app = Provider.of<AppData>(context, listen: false);
-
-    return InkWell(
-      onTap: () async {
-        final selectedLanguage = await showDialog<Language>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Reset Progress'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: supportedLanguages
-                  .map(
-                    (lang) => ListTile(
-                  title: Text(lang.name),
-                  onTap: () => Navigator.pop(ctx, lang),
-                ),
-              )
-                  .toList(),
-            ),
-          ),
-        );
-
-        if (selectedLanguage != null) {
-          final confirm = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('Confirm Reset'),
-              content: Text(
-                  'Are you sure you want to reset progress for ${selectedLanguage.name}?'),
-              actions: [
-                TextButton(
-                  child: const Text('Cancel'),
-                  onPressed: () => Navigator.pop(ctx, false),
-                ),
-                ElevatedButton(
-                  style:
-                  ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                  child: const Text('Reset'),
-                  onPressed: () => Navigator.pop(ctx, true),
-                ),
-              ],
-            ),
-          );
-
-          if (confirm == true) {
-            await app.resetProgress(languageCode: selectedLanguage.code);
-          }
-        }
-      },
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.4),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white70),
-        ),
-        child: const Center(
-          child: Text(
-            'Reset\nProgress',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-              shadows: [
-                Shadow(
-                  blurRadius: 5,
-                  color: Colors.black54,
-                  offset: Offset(1, 2),
-                )
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-
 // 🔹 Gradient color sets for letter tiles
 const List<List<Color>> _gradients = [
   [Color(0xFF42A5F5), Color(0xFF1976D2)],
@@ -526,6 +435,7 @@ const List<List<Color>> _gradients = [
   [Color(0xFFAB47BC), Color(0xFF6A1B9A)],
   [Color(0xFF26C6DA), Color(0xFF00838F)],
 ];
+
 // ==================== WORD PAGES ====================
 
 enum RecordingState { ready, recording, recorded }
@@ -550,31 +460,38 @@ class _WordPagesState extends State<WordPages> {
   late final FlutterSoundRecorder _recorder;
   late final FlutterTts _tts;
 
-  bool _recorderInitialized = false;
   RecordingState _recordingState = RecordingState.ready;
   String? _currentRecordingPath;
+  bool _recorderInitialized = false;
   int _currentPageIndex = 0;
+  bool _loading = true;
 
   bool get _isArabic => widget.language.code == 'ar';
 
   @override
   void initState() {
     super.initState();
+
+    // build pages first
+    _buildPages();
+
+    // controller after pages exist
+    _controller = PageController(initialPage: 0);
+    _controller.addListener(_onPageChange);
+
     _recorder = FlutterSoundRecorder();
     _tts = FlutterTts();
-    _buildPages();
-    _controller = PageController();
-    _controller.addListener(_onPageChanged);
-    _initRecorder();
-    _initTts();
-  }
 
-  void _onPageChanged() {
-    if (mounted) {
-      setState(() {
-        _currentPageIndex = _controller.page?.round() ?? 0;
-      });
-    }
+    // initialize recorder and tts (don't block UI)
+    _initRecorder().whenComplete(() {
+      if (mounted) setState(() {}); // update recorder state
+    });
+    _initTts().whenComplete(() {
+      if (mounted) setState(() {});
+    });
+
+    // done loading UI
+    _loading = false;
   }
 
   void _buildPages() {
@@ -582,26 +499,29 @@ class _WordPagesState extends State<WordPages> {
     final words = widget.language.wordsMap[letter] ?? [];
     _pages = [
       _PageItem(letter: letter),
-      ...words.map((w) => _PageItem(letter: letter, wordData: w)),
+      ...words.map((w) => _PageItem(letter: letter, wordData: w))
     ];
+  }
+
+  void _onPageChange() {
+    if (!mounted) return;
+    setState(() => _currentPageIndex = _controller.page?.round() ?? 0);
   }
 
   Future<void> _initRecorder() async {
     try {
       final status = await Permission.microphone.request();
       if (status != PermissionStatus.granted) {
-        if (mounted) {
-          _showSnackBar('Microphone permission required');
-        }
+        // permission not granted — recorder won't be available
+        _recorderInitialized = false;
         return;
       }
-
       await _recorder.openRecorder();
       _recorder.setSubscriptionDuration(const Duration(milliseconds: 200));
       _recorderInitialized = true;
     } catch (e) {
-      debugPrint('Recorder init failed: $e');
-      if (mounted) _showSnackBar('Recorder initialization failed');
+      debugPrint('Recorder init error: $e');
+      _recorderInitialized = false;
     }
   }
 
@@ -612,7 +532,7 @@ class _WordPagesState extends State<WordPages> {
       await _tts.setVolume(1.0);
       await _tts.setPitch(1.0);
     } catch (e) {
-      debugPrint('TTS init failed: $e');
+      debugPrint('TTS init error: $e');
     }
   }
 
@@ -621,8 +541,8 @@ class _WordPagesState extends State<WordPages> {
       await _tts.stop();
       await _tts.speak(text);
     } catch (e) {
-      debugPrint('Speak failed: $e');
-      if (mounted) _showSnackBar('Text-to-speech failed');
+      debugPrint('Speak error: $e');
+      if (mounted) _showSnackBar('Unable to speak');
     }
   }
 
@@ -630,7 +550,7 @@ class _WordPagesState extends State<WordPages> {
     if (!_recorderInitialized) {
       await _initRecorder();
       if (!_recorderInitialized) {
-        if (mounted) _showSnackBar('Recorder not ready');
+        if (mounted) _showSnackBar('Microphone permission required');
         return;
       }
     }
@@ -641,11 +561,13 @@ class _WordPagesState extends State<WordPages> {
         toFile: _currentRecordingPath,
         codec: Codec.aacMP4,
       );
-      setState(() => _recordingState = RecordingState.recording);
+      if (mounted) setState(() => _recordingState = RecordingState.recording);
     } catch (e) {
       debugPrint('Start recording failed: $e');
-      if (mounted) _showSnackBar('Recording failed to start');
-      setState(() => _recordingState = RecordingState.ready);
+      if (mounted) {
+        _showSnackBar('Recording failed to start');
+        setState(() => _recordingState = RecordingState.ready);
+      }
     }
   }
 
@@ -655,56 +577,52 @@ class _WordPagesState extends State<WordPages> {
     try {
       final path = await _recorder.stopRecorder();
       if (path != null && path.isNotEmpty) {
-        setState(() => _recordingState = RecordingState.recorded);
+        if (mounted) setState(() => _recordingState = RecordingState.recorded);
       } else {
-        if (mounted) _showSnackBar('Recording failed to save');
-        _cancelRecording();
+        if (mounted) {
+          _showSnackBar('Recording failed to save');
+          _cancelRecording();
+        }
       }
     } catch (e) {
       debugPrint('Stop recording failed: $e');
-      if (mounted) _showSnackBar('Failed to stop recording');
-      _cancelRecording();
+      if (mounted) {
+        _showSnackBar('Failed to stop recording');
+        _cancelRecording();
+      }
     }
   }
 
-  Future<void> _confirmRecording(String word, String letter) async {
+  Future<void> _saveRecording(String word, String letter) async {
     if (_currentRecordingPath == null) return;
 
     try {
       final langCode = context.read<LanguageNotifier>().currentLanguage.code;
-      await context.read<AppData>().addRecording(
-        word,
-        letter,
-        _currentRecordingPath!,
-        langCode,
-      );
+      await context.read<AppData>().addRecording(word, letter, _currentRecordingPath!, langCode);
 
       if (mounted) {
-        _showSnackBar('Recording submitted! 👍');
+        _showSnackBar('🎉 Good job! Recording saved.');
         setState(() {
           _recordingState = RecordingState.ready;
           _currentRecordingPath = null;
         });
 
-        final isLastPage = _currentPageIndex >= _pages.length - 1;
+        final isLast = _currentPageIndex >= (_pages.length - 1);
         await Future.delayed(const Duration(milliseconds: 250));
+        if (!mounted) return;
 
-        if (mounted) {
-          if (isLastPage) {
-            // Navigate back to homepage (pop all routes until first route)
-            Navigator.popUntil(context, (route) => route.isFirst);
-          } else {
-            _controller.nextPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeIn,
-            );
-          }
+        if (isLast) {
+          Navigator.popUntil(context, (route) => route.isFirst);
+        } else {
+          _controller.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeOut);
         }
       }
     } catch (e) {
-      if (mounted) _showSnackBar('Failed to submit recording');
+      debugPrint('Save recording error: $e');
+      if (mounted) _showSnackBar('Failed to save recording');
     }
   }
+
   void _cancelRecording() {
     if (_currentRecordingPath != null) {
       try {
@@ -714,60 +632,95 @@ class _WordPagesState extends State<WordPages> {
         debugPrint('Failed to delete cancelled recording: $e');
       }
     }
-    setState(() {
-      _recordingState = RecordingState.ready;
-      _currentRecordingPath = null;
-    });
+    if (mounted) {
+      setState(() {
+        _recordingState = RecordingState.ready;
+        _currentRecordingPath = null;
+      });
+    }
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message, textAlign: TextAlign.center),
+      backgroundColor: Colors.teal,
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
+    // safe guard: pages must exist
+    if (_loading || _pages.isEmpty) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final page = _pages[_currentPageIndex.clamp(0, _pages.length - 1)];
+    final textDir = _isArabic ? TextDirection.rtl : TextDirection.ltr;
+
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
+          // keep your background image (unchanged)
           image: DecorationImage(
             image: AssetImage('assets/background.jpg'),
-            fit: BoxFit.cover, // makes it fill the whole screen
+            fit: BoxFit.cover,
           ),
         ),
         child: Stack(
           children: [
+            // slight tint over background for readability
+            Container(
+              color: Colors.white.withOpacity(0.0),
+            ),
+
             SafeArea(
               child: Column(
                 children: [
+                  // top close button
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0, right: 8.0),
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: IconButton(
+                        icon: const Icon(Icons.close_rounded, color: Colors.black, size: 34),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ),
+                  ),
+
+                  // the pages
                   Expanded(
                     child: PageView.builder(
                       controller: _controller,
                       itemCount: _pages.length,
-                      itemBuilder: (context, index) =>
-                          _buildPage(_pages[index]),
+                      itemBuilder: (context, index) => _buildPage(_pages[index], textDir),
+                      onPageChanged: (idx) {
+                        if (mounted) setState(() => _currentPageIndex = idx);
+                      },
                     ),
                   ),
-                  _buildNavigationBar(),
+
+                  // navigation buttons
+                  _buildNavButtons(),
                 ],
               ),
             ),
-            _buildCloseButton(),
-            if (_pages[_currentPageIndex].wordData != null)
-              _buildRecordingControls(
-                _pages[_currentPageIndex].wordData!.split(',').first.trim(),
-                _pages[_currentPageIndex].letter,
-              ),
+
+            // mic controls only when page has wordData
+            if (page.wordData != null)
+              _buildMicControls(page.wordData!.split(',').first.trim(), page.letter),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildPage(_PageItem page) {
-    final textDir = _isArabic ? TextDirection.rtl : TextDirection.ltr;
-
+  Widget _buildPage(_PageItem page, TextDirection dir) {
+    // big letter-only page
     if (page.wordData == null) {
       return Center(
         child: Column(
@@ -775,300 +728,206 @@ class _WordPagesState extends State<WordPages> {
           children: [
             Text(
               page.letter,
-              textDirection: textDir,
-              style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                fontSize: 180,
-                color: Colors.black87,
-                fontWeight: FontWeight.bold,
-              ),
+              textDirection: dir,
+              style: const TextStyle(fontSize: 180, fontWeight: FontWeight.bold, color: Colors.black87),
             ),
-            const SizedBox(height:30),
-            IconButton(
-              icon: const Icon(Icons.volume_up, size: 40, color: Colors.black),
-              onPressed: () => _speak(page.letter),
-            ),
+            const SizedBox(height: 40),
+            _actionButton(Icons.volume_up, "Tap to hear", () => _speak(page.letter)),
           ],
         ),
       );
     }
 
+    // word page
     final parts = page.wordData!.split(',');
     final word = parts[0].trim();
 
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisAlignment: MainAxisAlignment.start,
       children: [
-        Center(
-          child: Text(
-            page.letter,
-            textDirection: textDir,
-            style: Theme.of(context).textTheme.displayLarge?.copyWith(
-              color: Colors.black87,
-              fontWeight: FontWeight.w600,fontSize: 100
-            ),
-          ),
-        ),
-        const SizedBox(height: 30),
-        Center(
-          child: Text(
-            word,
-            textDirection: textDir,
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-              color: Colors.black54,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-        const SizedBox(height: 50),
-        IconButton(
-          icon: const Icon(Icons.volume_up, size: 56, color: Colors.black87),
-          onPressed: () => _speak(word),
-        ),
+        Text(page.letter,
+            textDirection: dir,
+            style: const TextStyle(fontSize: 120, fontWeight: FontWeight.bold, color: Colors.black87)),
+        const SizedBox(height:70),
+        Text(word,
+            textDirection: dir,
+            style: const TextStyle(fontSize: 50, fontWeight: FontWeight.w600, color: Colors.black87)),
+        const SizedBox(height: 40),
+        _actionButton(Icons.volume_up, "Tap to hear", () => _speak(word)),
         if (_isArabic && parts.length > 2)
           Padding(
             padding: const EdgeInsets.only(top: 12),
-            child: Column(
-              children: [
-                Text(
-                  parts[1].trim(),
-                  style: const TextStyle(fontSize: 20, color: Colors.black),
-                ),
-                Text(
-                  parts[2].trim(),
-                  style: const TextStyle(fontSize: 20, color: Colors.black87),
-                ),
-              ],
+            child: Text(
+              '${parts[1].trim()} (${parts[2].trim()})',
+              style: const TextStyle(
+                fontSize: 22,
+                color: Colors.black87,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
             ),
           ),
-        const SizedBox(height: 70),
+
       ],
     );
   }
 
-  Widget _buildNavigationBar() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          IconButton(
-            icon: const Icon(
-              Icons.arrow_back_ios,
-              size: 36,
+  Widget _actionButton(IconData icon, String label, VoidCallback onTap) {
+    return Column(
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(50),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
               color: Colors.white,
+              border: Border.all(
+                color: Colors.black,
+                width: 2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 10,
+                  spreadRadius: 2,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            onPressed: () => _controller.previousPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeIn,
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.home, size: 36, color: Colors.black54),
-            onPressed: () => Navigator.pop(context),
-          ),
-          IconButton(
-            icon: const Icon(
-              Icons.arrow_forward_ios,
-              size: 36,
-              color: Colors.black38,
-            ),
-            onPressed: () => _controller.nextPage(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeIn,
+            child: CircleAvatar(
+              radius: 36,
+              backgroundColor: Colors.white,
+              child: Icon(icon, size: 36, color: Colors.teal),
             ),
           ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.black26, fontSize: 14),
+        ),
+      ],
+    );
+  }
+
+
+  Widget _buildMicControls(String word, String letter) {
+    switch (_recordingState) {
+      case RecordingState.recorded:
+        return _buildReviewButtons(word, letter);
+      case RecordingState.recording:
+      case RecordingState.ready:
+      default:
+        return _buildMicButton(word);
+    }
+  }
+
+  Widget _buildMicButton(String word) {
+    final isRec = _recordingState == RecordingState.recording;
+    return Positioned(
+      bottom: 125,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: GestureDetector(
+          onTap: () => isRec ? _stopRecording() : _startRecording(word),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            height: 90,
+            width: 90,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isRec ? Colors.redAccent : Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: isRec ? Colors.redAccent.withOpacity(0.5) : Colors.black26,
+                  blurRadius: 18,
+                  spreadRadius: isRec ? 6 : 2,
+                ),
+              ],
+            ),
+            child: Icon(isRec ? Icons.stop_rounded : Icons.mic, size: 44, color: isRec ? Colors.white : Colors.teal),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReviewButtons(String word, String letter) {
+    return Positioned(
+      bottom: 140,
+      left: 0,
+      right: 0,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _smallCircle(Icons.check, Colors.green, () => _saveRecording(word, letter)),
+          const SizedBox(width: 30),
+          _smallCircle(Icons.close, Colors.redAccent, _cancelRecording),
         ],
       ),
     );
   }
 
-  Widget _buildCloseButton() {
-    return Positioned(
-      top: 40,
-      right: 10,
-      child: IconButton(
-        icon: const Icon(Icons.close, color: Colors.black, size: 30),
-        onPressed: () => Navigator.pop(context),
+  Widget _smallCircle(IconData icon, Color color, VoidCallback onTap) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(40),
+      onTap: onTap,
+      child: CircleAvatar(
+        radius: 34,
+        backgroundColor: color,
+        child: Icon(icon, size: 28, color: Colors.white),
       ),
     );
   }
 
-  Widget _buildRecordingControls(String word, String letter) {
-    switch (_recordingState) {
-      case RecordingState.recorded:
-        return Positioned(
-          bottom: 200,
-          left: 100,
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Review Recording',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.black87,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _RecordingButton(
-                      icon: Icons.check,
-                      color: Colors.green,
-                      onPressed: () => _confirmRecording(word, letter),
-                    ),
-                    const SizedBox(width: 16),
-                    _RecordingButton(
-                      icon: Icons.close,
-                      color: Colors.redAccent,
-                      onPressed: _cancelRecording,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
+  Widget _buildNavButtons() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20, left: 20, right: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _navButton(Icons.arrow_back_ios, () => _controller.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut)),
+          _navButton(Icons.home_rounded, () => Navigator.pop(context)),
+          _navButton(Icons.arrow_forward_ios, () => _controller.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeOut)),
+        ],
+      ),
+    );
+  }
 
-      case RecordingState.recording:
-      case RecordingState.ready:
-        return Stack(
-          children: [
-            Positioned(
-              bottom: 120,
-              right: 30,
-              child: GestureDetector(
-                onTap: () {
-                  if (_recordingState == RecordingState.recording) {
-                    _stopRecording();
-                  } else {
-                    _startRecording(word);
-                  }
-                },
-                onLongPressStart: (_) => _startRecording(word),
-                onLongPressEnd: (_) => _stopRecording(),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 240),
-                  height: 70,
-                  width: 70,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _recordingState == RecordingState.recording
-                        ? Colors.redAccent
-                        : Colors.white,
-                    boxShadow: [
-                      if (_recordingState == RecordingState.recording)
-                        const BoxShadow(
-                          color: Colors.red,
-                          blurRadius: 24,
-                          spreadRadius: 6,
-                        )
-                      else
-                        BoxShadow(
-                          color: Colors.grey,
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                    ],
-                  ),
-                  child: Icon(
-                    _recordingState == RecordingState.recording
-                        ? Icons.stop_rounded
-                        : Icons.mic,
-                    size: 36,
-                    color: _recordingState == RecordingState.recording
-                        ? Colors.white
-                        : Colors.teal,
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 200,
-              right: 24,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _recordingState == RecordingState.recording
-                      ? 'Recording...'
-                      : 'Tap to Record',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-    }
+  Widget _navButton(IconData icon, VoidCallback onTap) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(50),
+      onTap: onTap,
+      child: CircleAvatar(
+        radius: 28,
+        backgroundColor: Colors.white.withOpacity(0.9),
+        child: Icon(icon, size: 28, color: Colors.teal),
+      ),
+    );
   }
 
   @override
   void dispose() {
     _controller.dispose();
-    _recorder.closeRecorder();
-    _tts.stop();
+    try {
+      _recorder.closeRecorder();
+    } catch (e) {
+      debugPrint('Error closing recorder: $e');
+    }
+    try {
+      _tts.stop();
+    } catch (e) {
+      debugPrint('Error stopping tts: $e');
+    }
     super.dispose();
-  }
-}
-
-class _RecordingButton extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final VoidCallback onPressed;
-
-  const _RecordingButton({
-    required this.icon,
-    required this.color,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: color,
-      shape: const CircleBorder(),
-      elevation: 4,
-      child: InkWell(
-        onTap: onPressed,
-        customBorder: const CircleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Icon(icon, color: Colors.white, size: 24),
-        ),
-      ),
-    );
   }
 }
 
 class _PageItem {
   final String letter;
   final String? wordData;
-
   _PageItem({required this.letter, this.wordData});
 }
